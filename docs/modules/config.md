@@ -244,6 +244,8 @@ model    = "deepseek-v4-flash"
 
 > **安全设计要点：** 后端从不直接调用小红书搜索 / Feed API。所有"主动发现"（关键词搜索、创作者主页浏览）都在用户自己的浏览器中以后台标签页形式执行，由扩展代理完成。被动发现则利用用户正常浏览时已经加载的卡片 URL，零额外请求。
 
+> **B 站-only 部署：** 设置环境变量 `OPENBILICLAW_NO_XHS=1` 后，小红书源会在运行时被整体禁用：后端不创建 `XhsTaskProducer`，扩展轮询 `/api/sources/xhs/next-task` 会拿到 204，`observed-urls` / `tokens` 入口会直接 no-op。该开关也会让 `openbiliclaw init` 跳过小红书 bootstrap。
+
 ### `[scheduler]`
 
 | 键 | 类型 | 默认值 | 说明 |
@@ -292,6 +294,8 @@ model    = "deepseek-v4-flash"
 | `OPENBILICLAW_PROXY_HOST` | Docker 运行时可选宿主机代理地址，默认 `host.docker.internal` |
 | `OPENBILICLAW_PROXY_PORT` | Docker 运行时可选宿主机代理端口，默认 `7897` |
 | `OPENBILICLAW_PROXY_TIMEOUT` | Docker 运行时代理探测超时（秒），默认 `1.0` |
+| `OPENBILICLAW_DISABLE_PROXY` | 设为 `1` / `true` / `yes` / `on` 时禁用 Docker 运行时代理自动探测，并清除容器内已有 `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` 环境变量 |
+| `OPENBILICLAW_NO_XHS` | 设为 `1` / `true` / `yes` / `on` 时禁用小红书 bootstrap、运行时任务生产、扩展任务 pickup 和被动 XHS ingest |
 
 ## Docker 部署说明
 
@@ -308,7 +312,7 @@ model    = "deepseek-v4-flash"
 - `data/` 会持久化 SQLite、画像、Cookie 和运行态文件
 - `logs/` 会持久化后端日志，便于排查服务器问题
 - 容器内运行时会把 `/app/runtime` 视为项目根目录，因此 `config-show` 中看到的路径应为 `/app/runtime/config.toml` 和 `/app/runtime/data`
-- 容器启动时会自动尝试探测 `host.docker.internal:$OPENBILICLAW_PROXY_PORT`；可达时自动注入代理，不可达时直接回退直连
+- 容器启动时会自动尝试探测 `host.docker.internal:$OPENBILICLAW_PROXY_PORT`；可达时自动注入代理，不可达时直接回退直连；如果不希望任何时候自动走代理，设置 `OPENBILICLAW_DISABLE_PROXY=1`
 - 容器内每次执行 `openbiliclaw ...` 时也会重复这层探测，因此 `docker exec` 场景不需要额外手动补 `HTTP_PROXY`
 
 如果你修改了 `[general].data_dir` 或 `[logging].directory` 为自定义绝对路径，需要同步调整 Docker volume 的挂载目标路径。

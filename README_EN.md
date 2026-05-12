@@ -69,6 +69,8 @@ The extension is your main interface — it shows recommendations in a Bilibili 
 
 > Developers can also `cd extension && npm install && npm run package` to build from source.
 
+If you only want to view recommendations, profile, and chat in a local browser page, start the backend and open `http://127.0.0.1:8420/app/`. This Web console reuses the existing backend API; it does not read browser cookies or collect page behavior. Automatic cookie sync and Bilibili behavior collection still require the extension, or a manually configured cookie.
+
 #### Important: log in to **every source you want to use**, in the same browser the extension is installed in
 
 OpenBiliClaw doesn't farm credentials — it reuses **your** current browser sessions to discover content cross-platform. So after installing the extension, log in to every source you care about **in the same browser**:
@@ -266,6 +268,7 @@ The whole loop stays local — OpenClaw just calls the CLI bridge; your profile 
 - 💬 **Warm Recommendations** — Not "because you watched similar videos", but friend-like explanations of why you'd enjoy something
 - 🔄 **Continuous Learning** — Socratic dialogue + behavioral analysis + instant feedback, understands you better over time
 - 🧩 **Chrome Extension** — Side panel for recommendations, cross-site behavior collection (Bilibili + Xiaohongshu), chat, and cognition update cards — install and go
+- 🖥️ **Local Web Console** — The backend serves `/app` for recommendations, profile, chat, and runtime status in a normal browser tab
 - 🔬 **Self-Optimizing Eval Loops** — Five modules each have an LLM-as-judge SGD/RL loop that automatically improves prompt quality over rounds — no manual tuning needed
 - 🔒 **Fully Private** — All data in local SQLite; LLM calls use your own key; each instance is built for exactly one person
 - 🔌 **Local Embedding Fallback** — Optional Ollama + bge-m3, no extra embedding API key required for similarity computation (CPU-only, runs on Mac/Win/Linux)
@@ -275,10 +278,10 @@ The whole loop stays local — OpenClaw just calls the CLI bridge; your profile 
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│                   Chrome Extension                   │
-│ (Behavior · Recs · Chat · Cookie Sync · XHS Init)       │
+│          Chrome Extension + Local Web Console        │
+│ (Behavior · Recs/Profile/Chat UI · Cookie Sync · XHS Init) │
 └────────────────────────┬────────────────────────────┘
-                         │ REST API / WebSocket cookie request
+                         │ REST API / WebSocket (extension requests cookies)
 ┌────────────────────────▼────────────────────────────┐
 │                 Agent Orchestration                   │
 │            (Skill System · Dialogue Mgmt)            │

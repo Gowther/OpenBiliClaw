@@ -78,6 +78,8 @@ class RuntimeStatusResponse:
     pending_signal_events: int
     unread_count: int
     pool_available_count: int = 0
+    pool_pending_copy_count: int = 0
+    pool_fresh_count: int = 0
     pool_target_count: int = 0
     last_discovered_count: int = 0
     last_refresh_at: str = ""

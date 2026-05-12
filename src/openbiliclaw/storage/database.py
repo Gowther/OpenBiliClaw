@@ -920,6 +920,56 @@ class Database:
             )
         )
 
+    def count_fresh_pool_rows(self) -> int:
+        """Return raw fresh pool rows before the serving gate is applied."""
+        cursor = self.conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM content_cache
+            WHERE COALESCE(pool_status, 'fresh') = 'fresh'
+              AND COALESCE(feedback_type, '') != 'dislike'
+            """
+        )
+        return int(cursor.fetchone()[0] or 0)
+
+    def count_pool_candidates_needing_copy(self) -> int:
+        """Return fresh, linkable rows waiting for popup copy precompute.
+
+        This mirrors ``get_pool_candidates_needing_copy`` but returns a
+        count for status UIs: rows already recommended, recently viewed, or
+        not linkable are excluded because they cannot become visible merely
+        by writing ``pool_expression`` / ``pool_topic_label``.
+        """
+        cursor = self.conn.execute(
+            """
+            SELECT bvid, source, source_platform, content_url
+            FROM content_cache
+            WHERE COALESCE(pool_status, 'fresh') = 'fresh'
+              AND COALESCE(feedback_type, '') != 'dislike'
+              AND (
+                COALESCE(pool_expression, '') = ''
+                OR COALESCE(pool_topic_label, '') = ''
+              )
+              AND NOT EXISTS (
+                SELECT 1
+                FROM recommendations AS r
+                WHERE r.bvid = content_cache.bvid
+              )
+            """
+        )
+        viewed_bvids = self.get_recent_viewed_bvids()
+        return sum(
+            1
+            for row in cursor.fetchall()
+            if str(row["bvid"]).strip()
+            and str(row["bvid"]).strip() not in viewed_bvids
+            and _is_linkable_pool_source(
+                row["source"],
+                row["source_platform"],
+                row["content_url"],
+            )
+        )
+
     def count_pool_candidates_by_source(self) -> dict[str, int]:
         """Return fresh pool counts grouped by discovery source family."""
         cursor = self.conn.execute(

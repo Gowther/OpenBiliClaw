@@ -93,6 +93,7 @@ CLI bridge 返回稳定 JSON：
 
 - `recommend --limit <n>` 默认走快路径，不触发 runtime refresh，更适合 OpenClaw 交互场景
 - `recommend --limit <n> --refresh-if-needed` 会显式触发较重的刷新链路，再返回结果
+- `get_runtime_status` 返回 `pool_available_count`、`pool_pending_copy_count`、`pool_fresh_count`，可区分可立即推荐、等待文案加工和原始 fresh 候选数
 - 如果显式 refresh 超时或上游请求异常，adapter 会自动回退到缓存推荐，避免 OpenClaw 会话长时间挂住
 - `doctor` 用于确认 skill pack 路径、发现状态和 skill 名称列表
 - `emit-skill-descriptors` 用于导出可序列化的 skill 定义，便于调试 OpenClaw 接线

@@ -406,6 +406,10 @@ class OpenClawAdapter:
             pending_signal_events=self._to_int(runtime_status.get("pending_signal_events", 0)),
             unread_count=self._to_int(runtime_status.get("unread_count", 0)),
             pool_available_count=self._to_int(runtime_status.get("pool_available_count", 0)),
+            pool_pending_copy_count=self._to_int(
+                runtime_status.get("pool_pending_copy_count", 0)
+            ),
+            pool_fresh_count=self._to_int(runtime_status.get("pool_fresh_count", 0)),
             pool_target_count=self._to_int(runtime_status.get("pool_target_count", 0)),
             last_discovered_count=self._to_int(runtime_status.get("last_discovered_count", 0)),
             last_refresh_at=str(runtime_status.get("last_refresh_at", "")),

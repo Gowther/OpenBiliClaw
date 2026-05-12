@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from openbiliclaw.docker_runtime import (
     bootstrap_runtime_environment,
     bootstrap_runtime_root,
+    can_connect,
     is_running_in_container,
     resolve_optional_proxy_env,
 )
@@ -50,6 +51,15 @@ def test_resolve_optional_proxy_env_adds_proxy_when_host_proxy_is_reachable() ->
     assert updates["no_proxy"] == "example.com,127.0.0.1,localhost,host.docker.internal"
 
 
+def test_resolve_optional_proxy_env_skips_when_proxy_is_disabled() -> None:
+    updates = resolve_optional_proxy_env(
+        {"OPENBILICLAW_DISABLE_PROXY": "1"},
+        can_connect=lambda host, port, timeout: True,
+    )
+
+    assert updates == {}
+
+
 def test_resolve_optional_proxy_env_returns_empty_when_host_proxy_is_unreachable() -> None:
     updates = resolve_optional_proxy_env(
         {},
@@ -57,6 +67,17 @@ def test_resolve_optional_proxy_env_returns_empty_when_host_proxy_is_unreachable
     )
 
     assert updates == {}
+
+
+def test_can_connect_returns_false_when_socket_refuses(monkeypatch) -> None:
+    def refuse_connection(*_args, **_kwargs):
+        raise ConnectionRefusedError(111, "Connection refused")
+
+    import openbiliclaw.docker_runtime as module
+
+    monkeypatch.setattr(module.socket, "create_connection", refuse_connection)
+
+    assert can_connect("host.docker.internal", 7897, 1.0) is False
 
 
 def test_bootstrap_runtime_root_creates_default_config_and_directories(tmp_path: Path) -> None:
@@ -140,6 +161,34 @@ def test_bootstrap_runtime_environment_skips_proxy_outside_container(tmp_path: P
     assert (runtime_root / "config.toml").exists()
     assert (runtime_root / "data").is_dir()
     assert (runtime_root / "logs").is_dir()
+
+
+def test_bootstrap_runtime_environment_clears_existing_proxy_when_disabled(
+    tmp_path: Path,
+) -> None:
+    runtime_root = tmp_path / "runtime"
+    template = tmp_path / "config.example.toml"
+    template.write_text("[general]\nlanguage = \"zh\"\n", encoding="utf-8")
+    env = {
+        "OPENBILICLAW_PROJECT_ROOT": str(runtime_root),
+        "OPENBILICLAW_CONFIG_TEMPLATE": str(template),
+        "OPENBILICLAW_DISABLE_PROXY": "true",
+        "HTTP_PROXY": "http://proxy.example:8080",
+        "HTTPS_PROXY": "http://proxy.example:8080",
+        "ALL_PROXY": "http://proxy.example:8080",
+    }
+
+    bootstrap_runtime_environment(
+        env,
+        can_connect=lambda host, port, timeout: True,
+        in_container=lambda _env: True,
+    )
+
+    assert "HTTP_PROXY" not in env
+    assert "HTTPS_PROXY" not in env
+    assert "ALL_PROXY" not in env
+    assert env["OPENBILICLAW_DISABLE_PROXY"] == "true"
+    assert (runtime_root / "config.toml").exists()
 
 
 def test_is_running_in_container_respects_explicit_env() -> None:

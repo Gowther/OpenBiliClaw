@@ -330,6 +330,110 @@ class TestBackendAPI:
         assert response.status_code == 200
         assert response.json() == {"status": "ok", "service": "openbiliclaw-api"}
 
+    def test_web_console_is_served_under_app(self) -> None:
+        from fastapi.testclient import TestClient
+
+        app = create_app(memory_manager=object(), database=object(), soul_engine=object())
+        client = TestClient(app)
+
+        redirect = client.get("/app", follow_redirects=False)
+        index = client.get("/app/")
+        script = client.get("/app/app.js")
+        styles = client.get("/app/styles.css")
+
+        assert redirect.status_code in {307, 308}
+        assert redirect.headers["location"] == "/app/"
+        assert index.status_code == 200
+        assert "本地推荐控制台" in index.text
+        assert "app.js?v=20260512-pool-counts" in index.text
+        assert 'id="delightSlot"' in index.text
+        assert 'id="messagesPanel"' in index.text
+        assert 'id="activityPanel"' in index.text
+        assert script.status_code == 200
+        assert "recommendations/reshuffle" in script.text
+        assert "delight/pending-batch" in script.text
+        assert "interest-probes/respond" in script.text
+        assert "activity-feed" in script.text
+        assert "pool_pending_copy_count" in script.text
+        assert "/image-proxy" in script.text
+        assert styles.status_code == 200
+        assert ".delight-card" in styles.text
+        assert ".message-card" in styles.text
+
+    def test_image_proxy_rejects_non_bilibili_hosts(self) -> None:
+        from fastapi.testclient import TestClient
+
+        app = create_app(memory_manager=object(), database=object(), soul_engine=object())
+        client = TestClient(app)
+
+        response = client.get(
+            "/api/image-proxy",
+            params={"url": "http://127.0.0.1/private.png"},
+        )
+
+        assert response.status_code == 400
+
+    def test_image_proxy_fetches_bilibili_image(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import httpx
+        from fastapi.testclient import TestClient
+
+        captured: dict[str, object] = {}
+
+        class FakeStreamResponse:
+            status_code = 200
+            headers = {"content-type": "image/jpeg"}
+            url = "https://i0.hdslb.com/bfs/archive/cover.jpg"
+
+            async def __aenter__(self) -> FakeStreamResponse:
+                return self
+
+            async def __aexit__(self, *args: object) -> None:
+                return None
+
+            async def aiter_bytes(self):
+                yield b"fake"
+                yield b"jpg"
+
+        class FakeAsyncClient:
+            def __init__(self, *, timeout: float, follow_redirects: bool) -> None:
+                captured["timeout"] = timeout
+                captured["follow_redirects"] = follow_redirects
+
+            async def __aenter__(self) -> FakeAsyncClient:
+                return self
+
+            async def __aexit__(self, *args: object) -> None:
+                return None
+
+            def stream(
+                self,
+                method: str,
+                url: str,
+                headers: dict[str, str],
+            ) -> FakeStreamResponse:
+                captured["method"] = method
+                captured["url"] = url
+                captured["headers"] = headers
+                return FakeStreamResponse()
+
+        monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
+        app = create_app(memory_manager=object(), database=object(), soul_engine=object())
+        client = TestClient(app)
+
+        response = client.get(
+            "/api/image-proxy",
+            params={"url": "https://i0.hdslb.com/bfs/archive/cover.jpg"},
+        )
+
+        assert response.status_code == 200
+        assert response.content == b"fakejpg"
+        assert response.headers["content-type"] == "image/jpeg"
+        assert captured["method"] == "GET"
+        assert captured["headers"]["Referer"] == "https://www.bilibili.com/"
+
     def test_bilibili_cookie_endpoint_persists_and_validates(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
@@ -402,6 +506,7 @@ class TestBackendAPI:
         cookie_file = tmp_path / "data" / "bilibili_cookie.json"
         assert cookie_file.exists()
         import json
+
         assert json.loads(cookie_file.read_text())["cookie"] == cookie_value
 
         # Side effect 2: config.toml [bilibili].cookie mirrors the cookie.
@@ -611,28 +716,32 @@ class TestBackendAPI:
                 # only 2 survive.
                 base: list[dict[str, object]] = []
                 for i in range(5):
-                    base.append({
-                        "id": i,
-                        "bvid": f"BV原神{i}",
-                        "title": f"原神 番外 {i}",
-                        "up_name": "某 UP",
+                    base.append(
+                        {
+                            "id": i,
+                            "bvid": f"BV原神{i}",
+                            "title": f"原神 番外 {i}",
+                            "up_name": "某 UP",
+                            "cover_url": "",
+                            "expression": "",
+                            "topic": "游戏",
+                            "presented": 0,
+                            "franchise_key": "原神",
+                        }
+                    )
+                base.append(
+                    {
+                        "id": 99,
+                        "bvid": "BV番茄",
+                        "title": "番茄炒蛋 5 分钟",
+                        "up_name": "美食 UP",
                         "cover_url": "",
                         "expression": "",
-                        "topic": "游戏",
+                        "topic": "美食",
                         "presented": 0,
-                        "franchise_key": "原神",
-                    })
-                base.append({
-                    "id": 99,
-                    "bvid": "BV番茄",
-                    "title": "番茄炒蛋 5 分钟",
-                    "up_name": "美食 UP",
-                    "cover_url": "",
-                    "expression": "",
-                    "topic": "美食",
-                    "presented": 0,
-                    "franchise_key": "",
-                })
+                        "franchise_key": "",
+                    }
+                )
                 return base
 
         app = create_app(database=FakeDatabase())
@@ -641,9 +750,7 @@ class TestBackendAPI:
         response = client.get("/api/recommendations")
         assert response.status_code == 200
         items = response.json()["items"]
-        franchise_count = sum(
-            1 for it in items if str(it["title"]).startswith("原神")
-        )
+        franchise_count = sum(1 for it in items if str(it["title"]).startswith("原神"))
         # 5 同 IP 行被砍到 2，番茄炒蛋（无 franchise）仍保留
         assert franchise_count == 2
         assert any(it["title"].startswith("番茄炒蛋") for it in items)
@@ -661,6 +768,8 @@ class TestBackendAPI:
                     "last_notification_at": "2026-03-10T12:30:00",
                     "unread_count": 2,
                     "pool_available_count": 28,
+                    "pool_pending_copy_count": 11,
+                    "pool_fresh_count": 39,
                     "pool_target_count": 30,
                     "last_discovered_count": 14,
                     "last_replenished_count": 6,
@@ -694,6 +803,8 @@ class TestBackendAPI:
             "last_notification_at": "2026-03-10T12:30:00",
             "unread_count": 2,
             "pool_available_count": 28,
+            "pool_pending_copy_count": 11,
+            "pool_fresh_count": 39,
             "pool_target_count": 30,
             "last_discovered_count": 14,
             "last_replenished_count": 6,
@@ -1344,7 +1455,7 @@ class TestBackendAPI:
                         "kind": "interest_added",
                         "summary": "阿B 现在更确定你会吃国际时事深拆这一口。",
                         "context_line": "基于最近内容：《中东局势深拆》 / 《国际秩序观察》",
-                        "impact": '画像里\u201c国际新闻 / 深度分析\u201d这条偏好会更靠前。',
+                        "impact": "画像里\u201c国际新闻 / 深度分析\u201d这条偏好会更靠前。",
                         "reasoning": "这更像是连续强化后的稳定兴趣，不只是一次随手点开。",
                         "evidence": "因为你最近连续点开相关内容，还主动提到了国际时事。",
                         "source": "chat",
@@ -1413,7 +1524,9 @@ class TestBackendAPI:
         assert data["deep_needs"] == ["理解世界", "持续成长", "高质量独处", "智性共鸣", "掌控感"]
         assert data["values"] == ["独立思考", "真实", "深度"]
         assert data["motivational_drivers"] == [
-            "建立判断确定性", "持续扩展理解边界", "在复杂信息里找到秩序感",
+            "建立判断确定性",
+            "持续扩展理解边界",
+            "在复杂信息里找到秩序感",
         ]
         assert data["cognitive_style"] == [
             "会先看结构",
@@ -1688,9 +1801,7 @@ class TestBackendAPI:
         response = client.post("/api/chat", json={"message": "我最近总在看国际新闻"})
 
         assert response.status_code == 200
-        assert response.json() == {
-            "reply": "你更在意的是它背后的逻辑，还是事件本身的冲突感？"
-        }
+        assert response.json() == {"reply": "你更在意的是它背后的逻辑，还是事件本身的冲突感？"}
 
     def test_chat_endpoint_rejects_empty_message(self) -> None:
         from fastapi.testclient import TestClient
@@ -1724,7 +1835,8 @@ class TestBackendAPI:
 
         class FakeDatabase:
             def get_recommendation_by_id(
-                self, recommendation_id: int,
+                self,
+                recommendation_id: int,
             ) -> dict[str, object] | None:
                 if recommendation_id != 99:
                     return None
@@ -1821,7 +1933,8 @@ class TestBackendAPI:
 
         class FakeDatabase:
             def get_recommendation_by_id(
-                self, recommendation_id: int,
+                self,
+                recommendation_id: int,
             ) -> dict[str, object] | None:
                 return None  # should not be called
 
@@ -1869,7 +1982,8 @@ class TestBackendAPI:
 
         class FakeDatabase:
             def get_recommendation_by_id(
-                self, recommendation_id: int,
+                self,
+                recommendation_id: int,
             ) -> dict[str, object] | None:
                 return None  # unknown recommendation
 
@@ -2307,9 +2421,7 @@ class TestEmbeddingAndCompatProviderE2E:
         assert "*" in compat["api_key"]
         assert "gsk-groq-secret-key-1234567890" not in compat["api_key"]
 
-    def test_get_config_exposes_embedding_credentials_masked(
-        self, monkeypatch, tmp_path
-    ) -> None:
+    def test_get_config_exposes_embedding_credentials_masked(self, monkeypatch, tmp_path) -> None:
         """v0.3.32+ embedding owns api_key/base_url. They must surface
         in /api/config (so the popup knows what's configured) with
         api_key masked."""
@@ -2345,9 +2457,7 @@ class TestEmbeddingAndCompatProviderE2E:
         assert "*" in emb["api_key"]
         assert "sk-embed-secret-1234567890" not in emb["api_key"]
 
-    def test_get_config_with_reveal_keys_returns_raw_secrets(
-        self, monkeypatch, tmp_path
-    ) -> None:
+    def test_get_config_with_reveal_keys_returns_raw_secrets(self, monkeypatch, tmp_path) -> None:
         """``GET /api/config?reveal_keys=true`` returns unmasked keys
         for both new fields (openai_compatible.api_key + embedding.api_key).
         Used by the popup when the user clicks "show" to edit."""
@@ -2375,9 +2485,7 @@ class TestEmbeddingAndCompatProviderE2E:
 
     # ── PUT round-trip: openai_compatible ───────────────────────────
 
-    def test_put_openai_compatible_round_trips_through_get(
-        self, monkeypatch, tmp_path
-    ) -> None:
+    def test_put_openai_compatible_round_trips_through_get(self, monkeypatch, tmp_path) -> None:
         """PUT a full [llm.openai_compatible] block, then GET — the
         non-secret fields come back identical, api_key comes back
         masked but the in-memory config object holds the real value."""
@@ -2417,9 +2525,7 @@ class TestEmbeddingAndCompatProviderE2E:
         assert "*" in compat["api_key"]
         assert "gsk-fresh-groq-key-1234567890" not in compat["api_key"]
 
-    def test_put_openai_compatible_does_not_stomp_openai_block(
-        self, monkeypatch, tmp_path
-    ) -> None:
+    def test_put_openai_compatible_does_not_stomp_openai_block(self, monkeypatch, tmp_path) -> None:
         """Partial PUT with only [llm.openai_compatible] must NOT clear
         the existing [llm.openai] block. Both providers can coexist
         (the whole point of the v0.3.32 split)."""
@@ -2491,15 +2597,11 @@ class TestEmbeddingAndCompatProviderE2E:
 
         issues = resp.json()["config"]["issues"]
         fields = [i["field"] for i in issues]
-        assert "llm.openai_compatible.base_url" in fields, (
-            f"expected base_url issue in {fields}"
-        )
+        assert "llm.openai_compatible.base_url" in fields, f"expected base_url issue in {fields}"
 
     # ── Embedding round-trip + masked-echo protection ───────────────
 
-    def test_put_embedding_via_openai_compatible_round_trip(
-        self, monkeypatch, tmp_path
-    ) -> None:
+    def test_put_embedding_via_openai_compatible_round_trip(self, monkeypatch, tmp_path) -> None:
         """Embedding can independently target an openai_compatible
         backend (vLLM / Together / Azure OpenAI), with its own api_key
         and base_url — no need to also fill [llm.openai_compatible]."""
@@ -2620,9 +2722,7 @@ class TestEmbeddingAndCompatProviderE2E:
 
     # ── Coexistence: both providers usable in one config ────────────
 
-    def test_get_after_dual_put_returns_both_provider_blocks(
-        self, monkeypatch, tmp_path
-    ) -> None:
+    def test_get_after_dual_put_returns_both_provider_blocks(self, monkeypatch, tmp_path) -> None:
         """Set both [llm.openai] (real OpenAI for chat) and
         [llm.openai_compatible] (Groq for fast drafting) in one PUT.
         Both blocks must round-trip independently — the v0.3.32 split

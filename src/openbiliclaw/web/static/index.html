@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OpenBiliClaw</title>
+    <link rel="stylesheet" href="/app/styles.css?v=20260512-pool-counts" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="kicker">OpenBiliClaw</p>
+          <h1>本地推荐控制台</h1>
+        </div>
+        <div class="topbar-actions">
+          <span id="streamState" class="status-pill" data-tone="muted">实时连接中</span>
+          <button id="reloadButton" class="secondary-button" type="button">刷新</button>
+        </div>
+      </header>
+
+      <main>
+        <section class="status-grid" aria-label="运行状态">
+          <article class="status-card">
+            <span class="status-label">后端</span>
+            <strong id="backendStatus">检查中</strong>
+          </article>
+          <article class="status-card">
+            <span class="status-label">画像</span>
+            <strong id="profileStatus">未知</strong>
+          </article>
+          <article class="status-card">
+            <span class="status-label">库存</span>
+            <strong id="poolStatus">0 / 0</strong>
+          </article>
+          <article class="status-card">
+            <span class="status-label">最近动作</span>
+            <strong id="liveSummary">等待后端事件</strong>
+          </article>
+        </section>
+
+        <nav class="tabs" aria-label="主视图">
+          <button class="tab-button is-active" type="button" data-tab="recommend">推荐</button>
+          <button class="tab-button" type="button" data-tab="profile">画像</button>
+          <button class="tab-button" type="button" data-tab="activity">动态</button>
+          <button class="tab-button message-tab" type="button" data-tab="messages">
+            消息
+            <span id="messageBadge" class="badge" hidden></span>
+          </button>
+          <button class="tab-button" type="button" data-tab="chat">聊天</button>
+        </nav>
+
+        <section id="recommendPanel" class="tab-panel">
+          <div class="section-toolbar">
+            <div>
+              <h2>推荐</h2>
+              <p id="recommendHint">优先展示 B 站内容，可切换查看全部来源。</p>
+            </div>
+            <div class="toolbar-actions">
+              <select id="sourceFilter" aria-label="来源过滤">
+                <option value="bilibili">只看 B 站</option>
+                <option value="all">全部来源</option>
+              </select>
+              <button id="refreshPoolButton" class="secondary-button" type="button">后台补货</button>
+              <button id="appendButton" class="secondary-button" type="button">继续追加</button>
+              <button id="reshuffleButton" class="primary-button" type="button">换一批</button>
+            </div>
+          </div>
+          <div id="delightSlot" class="delight-slot" hidden></div>
+          <div id="recommendationList" class="recommendation-list"></div>
+        </section>
+
+        <section id="profilePanel" class="tab-panel" hidden>
+          <div class="section-toolbar">
+            <div>
+              <h2>画像</h2>
+              <p>本地后端根据近期信号生成的偏好摘要。</p>
+            </div>
+          </div>
+          <div id="profileView" class="profile-grid"></div>
+        </section>
+
+        <section id="activityPanel" class="tab-panel" hidden>
+          <div class="section-toolbar">
+            <div>
+              <h2>动态</h2>
+              <p>后端补货、画像学习和近期认知变化的本地记录。</p>
+            </div>
+            <div class="toolbar-actions">
+              <button id="activityMoreButton" class="secondary-button" type="button" hidden>
+                加载更多
+              </button>
+            </div>
+          </div>
+          <div id="activityList" class="activity-list"></div>
+        </section>
+
+        <section id="messagesPanel" class="tab-panel" hidden>
+          <div class="section-toolbar">
+            <div>
+              <h2>消息</h2>
+              <p>待处理的兴趣探针和惊喜推荐。</p>
+            </div>
+          </div>
+          <div id="messagesList" class="message-list"></div>
+        </section>
+
+        <section id="chatPanel" class="tab-panel" hidden>
+          <div class="section-toolbar">
+            <div>
+              <h2>聊天</h2>
+              <p>和本地后端对话，聊天信号会进入受控学习链路。</p>
+            </div>
+          </div>
+          <div id="chatLog" class="chat-log" aria-live="polite"></div>
+          <form id="chatForm" class="chat-form">
+            <textarea id="chatInput" rows="3" placeholder="直接问阿B，比如：最近推荐为什么偏 AI 工具？"></textarea>
+            <button id="chatSendButton" class="primary-button" type="submit">发送</button>
+          </form>
+        </section>
+      </main>
+    </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+    <script type="module" src="/app/app.js?v=20260512-pool-counts"></script>
+  </body>
+</html>

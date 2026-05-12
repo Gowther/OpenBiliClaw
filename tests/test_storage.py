@@ -1190,6 +1190,23 @@ class TestDatabase:
 
             db.close()
 
+    def test_pool_status_counts_split_ready_pending_and_raw_fresh(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(Path(tmpdir) / "test.db")
+            db.initialize()
+
+            db.cache_content("ready", title="ready", source="search", relevance_score=0.8)
+            db.update_pool_copy("ready", expression="x", topic_label="y")
+            db.cache_content("pending", title="pending", source="search", relevance_score=0.7)
+            db.cache_content("rejected", title="rejected", source="search", relevance_score=0.6)
+            db.mark_pool_items_purged_by_dislike(["rejected"])
+
+            assert db.count_pool_candidates() == 1
+            assert db.count_pool_candidates_needing_copy() == 1
+            assert db.count_fresh_pool_rows() == 2
+
+            db.close()
+
     def test_update_pool_copy_makes_row_visible_in_pool(self) -> None:
         """v0.3.57+: round-trip — empty-copy row stays hidden until
         update_pool_copy fills both fields, then becomes visible."""

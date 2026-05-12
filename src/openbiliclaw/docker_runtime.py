@@ -26,6 +26,7 @@ _PROXY_KEYS = (
     "https_proxy",
     "all_proxy",
 )
+_TRUE_ENV_VALUES = {"1", "true", "yes", "on"}
 
 
 def bootstrap_runtime_root(
@@ -129,8 +130,11 @@ def _set_toml_string(content: str, section: str, key: str, value: str) -> str:
 
 def can_connect(host: str, port: int, timeout: float) -> bool:
     """Return whether a TCP endpoint is reachable."""
-    with socket.create_connection((host, port), timeout=timeout):
-        return True
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
 
 
 def resolve_optional_proxy_env(
@@ -142,6 +146,9 @@ def resolve_optional_proxy_env(
     timeout: float = _DEFAULT_PROXY_TIMEOUT,
 ) -> dict[str, str]:
     """Return proxy env updates when a host-side Clash proxy is reachable."""
+    if _env_flag_enabled(env.get("OPENBILICLAW_DISABLE_PROXY", "")):
+        return {}
+
     if any(str(env.get(key, "")).strip() for key in _PROXY_KEYS):
         return {}
 
@@ -169,6 +176,15 @@ def _merge_no_proxy(current: str) -> str:
         if entry not in entries:
             entries.append(entry)
     return ",".join(entries)
+
+
+def _clear_proxy_env(env: MutableMapping[str, str]) -> None:
+    for key in _PROXY_KEYS:
+        env.pop(key, None)
+
+
+def _env_flag_enabled(value: str | None) -> bool:
+    return str(value or "").strip().lower() in _TRUE_ENV_VALUES
 
 
 def is_running_in_container(env: MutableMapping[str, str] | None = None) -> bool:
@@ -207,6 +223,10 @@ def bootstrap_runtime_environment(
 
     # Proxy auto-detection is ONLY safe inside container runtimes.
     if not in_container(env):
+        return
+
+    if _env_flag_enabled(env.get("OPENBILICLAW_DISABLE_PROXY", "")):
+        _clear_proxy_env(env)
         return
 
     proxy_host = env.get("OPENBILICLAW_PROXY_HOST", _DEFAULT_PROXY_HOST).strip()

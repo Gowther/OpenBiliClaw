@@ -27,6 +27,7 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
+from openbiliclaw.runtime.source_flags import xhs_disabled
 from openbiliclaw.runtime.task_registry import BackgroundTaskRegistry
 
 if TYPE_CHECKING:
@@ -237,7 +238,7 @@ class RuntimeContext:
 
         # 8. Continuous refresh controller
         new_xhs_producer: Any = None
-        if hasattr(self.database, "conn"):
+        if hasattr(self.database, "conn") and not xhs_disabled():
             from openbiliclaw.runtime.xhs_producer import XhsTaskProducer
             from openbiliclaw.sources.xhs_tasks import XhsTaskQueue
 

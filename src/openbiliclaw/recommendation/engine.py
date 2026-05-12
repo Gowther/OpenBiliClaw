@@ -1229,12 +1229,15 @@ class RecommendationEngine:
             return await self._precompute_single_fallback(batch, profile)
 
         completed = 0
+        missing_items: list[DiscoveredContent] = []
         for i, item in enumerate(batch):
             if i >= len(payload) or not isinstance(payload[i], dict):
+                missing_items.append(item)
                 continue
             expression = str(payload[i].get("expression", "")).strip()
             topic_label = str(payload[i].get("topic_label", "")).strip()
             if not expression or not topic_label:
+                missing_items.append(item)
                 continue
             self._database.update_pool_copy(
                 item.bvid,
@@ -1244,6 +1247,15 @@ class RecommendationEngine:
             item.pool_expression = expression
             item.pool_topic_label = topic_label
             completed += 1
+        if missing_items:
+            logger.warning(
+                "Batch expression generation returned %d/%d usable items; "
+                "falling back to single generation for %d items",
+                completed,
+                len(batch),
+                len(missing_items),
+            )
+            completed += await self._precompute_single_fallback(missing_items, profile)
         return completed
 
     async def _precompute_single_fallback(
@@ -1389,7 +1401,7 @@ class RecommendationEngine:
             response = await self._llm.complete_structured_task(
                 system_instruction=messages[0]["content"],
                 user_input=messages[1]["content"],
-                caller="recommendation.expression",
+                caller="recommendation.write_expression.fallback",
             )
             payload = json.loads(response.content.strip())
             if not isinstance(payload, dict):
@@ -1785,9 +1797,7 @@ class RecommendationEngine:
                 return True
             if _exceeds_broad_cap(item):
                 return True
-            if style_counts.get(cls._style_token(item), 0) >= per_style_cap:
-                return True
-            return False
+            return style_counts.get(cls._style_token(item), 0) >= per_style_cap
 
         def _relevance(item: DiscoveredContent) -> float:
             if score_override:

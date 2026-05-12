@@ -860,6 +860,76 @@ async def test_reshuffle_recommendations_hides_missing_precomputed_copy() -> Non
 
 
 @pytest.mark.asyncio
+async def test_precompute_pool_copy_falls_back_for_partial_batch_response() -> None:
+    """If the batch LLM returns only part of the requested array, the
+    missing rows should be filled in the same precompute pass instead of
+    waiting for the next 60s runtime tick."""
+
+    class _PartialBatchLLM(_DummyLLM):
+        async def complete_structured_task(self, **kwargs) -> LLMResponse:  # type: ignore[override]
+            self.calls.append(kwargs)
+            if len(self.calls) == 1:
+                return LLMResponse(
+                    content=json.dumps(
+                        [
+                            {
+                                "expression": "第一条批量文案",
+                                "topic_label": "第一条批量主题",
+                            }
+                        ],
+                        ensure_ascii=False,
+                    ),
+                    provider="test",
+                    model="dummy",
+                    usage={},
+                )
+            return LLMResponse(
+                content=json.dumps(
+                    {
+                        "expression": "第二条 fallback 文案",
+                        "topic_label": "第二条 fallback 主题",
+                    },
+                    ensure_ascii=False,
+                ),
+                provider="test",
+                model="dummy",
+                usage={},
+            )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = Database(Path(tmpdir) / "test.db")
+        db.initialize()
+        for bvid, title, score in [
+            ("BV1PARTIALA", "第一条待加工", 0.91),
+            ("BV1PARTIALB", "第二条待加工", 0.9),
+        ]:
+            db.cache_content(
+                bvid,
+                title=title,
+                up_name="测试 UP",
+                source="search",
+                style_key="deep_analysis",
+                topic_group="测试主题组",
+                relevance_score=score,
+            )
+        llm = _PartialBatchLLM()
+        engine = RecommendationEngine(llm=llm, database=db)
+
+        completed = await engine.precompute_pool_copy(
+            profile=_build_profile(),
+            limit=2,
+            delight_limit=0,
+        )
+
+        assert completed == 2
+        assert db.count_pool_candidates() == 2
+        rows = {row["bvid"]: row for row in db.get_pool_candidates(limit=10)}
+        assert rows["BV1PARTIALA"]["pool_expression"] == "第一条批量文案"
+        assert rows["BV1PARTIALB"]["pool_expression"] == "第二条 fallback 文案"
+        assert llm.calls[-1]["caller"] == "recommendation.write_expression.fallback"
+
+
+@pytest.mark.asyncio
 async def test_reshuffle_recommendations_skips_recently_viewed_content() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         db = Database(Path(tmpdir) / "test.db")

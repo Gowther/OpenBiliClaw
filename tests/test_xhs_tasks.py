@@ -213,10 +213,11 @@ class TestXhsCreatorStore:
 
 
 @pytest.fixture
-def api_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
-    db = Database(tmp_path / "api.db")
-    db.initialize()
-
+def api_client(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    db: Database,
+) -> TestClient:
     fake_config = SimpleNamespace(
         data_path=tmp_path,
         bilibili=SimpleNamespace(cookie="", browser_executable="", browser_headed=False),
@@ -245,6 +246,35 @@ class TestXhsTaskApi:
     def test_next_task_returns_204_when_empty(self, api_client: TestClient) -> None:
         resp = api_client.get("/api/sources/xhs/next-task")
         assert resp.status_code == 204
+
+    def test_no_xhs_env_blocks_pending_task_pickup(
+        self,
+        api_client: TestClient,
+        db: Database,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        queue = XhsTaskQueue(db)
+        assert queue.enqueue("search", {"keyword": "机械键盘"})
+        monkeypatch.setenv("OPENBILICLAW_NO_XHS", "1")
+
+        resp = api_client.get("/api/sources/xhs/next-task")
+
+        assert resp.status_code == 204
+
+    def test_no_xhs_env_ignores_passive_ingest(
+        self,
+        api_client: TestClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("OPENBILICLAW_NO_XHS", "1")
+
+        resp = api_client.post(
+            "/api/sources/xhs/observed-urls",
+            json={"urls": ["https://www.xiaohongshu.com/explore/abc"]},
+        )
+
+        assert resp.status_code == 200
+        assert resp.json() == {"ok": True, "accepted": 0, "disabled": True}
 
     def test_task_result_completes_task(self, api_client: TestClient) -> None:
         # Enqueue via internal queue (simulating scheduler)

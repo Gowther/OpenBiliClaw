@@ -4,6 +4,29 @@
 
 ---
 
+## v0.3.68: 新增本地 Web 控制台入口（2026-05-12）
+
+- 后端新增 `/app` 静态入口，访问 `http://127.0.0.1:8420/app/` 可直接打开本地 Web 控制台。
+- Web 控制台复用现有 `/api/*`：支持推荐列表、换一批、继续追加、后台补货、推荐反馈、内容点击回传、画像摘要、近期认知变化、聊天和运行状态。
+- Web 控制台二档补齐不依赖插件注入权限的功能：惊喜推荐队列、消息中心、兴趣探针确认/拒绝/对话、活动流、画像详细层次和认知变化分页。
+- 运行状态新增 `pool_pending_copy_count` / `pool_fresh_count`，Web 顶部库存卡现在同时展示“可换 / 待加工 / fresh”，避免把“发现了内容但还没写推荐文案”误读成补货无效。
+- 推荐文案批处理返回不完整时，本轮立即对缺失项走单条 fallback，并把 fallback 也标记为 `recommendation.write_expression.*` 优先级，减少库存长时间停在 0 或每轮只增加少量的情况。
+- 页面默认只展示 B 站推荐，可切换到全部来源；这能避免 B 站-only 部署中旧的小红书历史推荐继续占据首屏。
+- Web 控制台新增受限的 `/api/image-proxy`，仅代理 B 站图片 CDN 域名并补齐 Referer，避免 localhost 直连 B 站封面图出现 403。
+- Web 控制台不替代插件的采集与配置能力：自动同步 B 站 Cookie、注入页面采集点击/停留/搜索、跨站任务执行和配置编辑仍依赖浏览器插件、CLI 或本地配置文件。
+
+---
+
+## v0.3.67: Docker 运行时支持显式禁用代理自动探测（2026-05-12）
+
+- 新增 `OPENBILICLAW_DISABLE_PROXY` 环境变量，设为 `1` / `true` / `yes` / `on` 时，Docker 启动辅助逻辑不会自动探测宿主机代理，并会清除容器环境中已有的 `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`。
+- 本地部署用 `docker-compose.local.yml` 默认设置 `OPENBILICLAW_DISABLE_PROXY=1`，适配“不配置代理且不希望容器自动走代理”的本机使用场景。
+- `can_connect()` 对连接拒绝等 `OSError` 返回 `False`，宿主机代理端口不可达时不再导致容器启动崩溃。
+- `OPENBILICLAW_NO_XHS=1` 现在同时作用于 `serve-api` 运行时：不再创建 `XhsTaskProducer`，`/api/sources/xhs/next-task` 返回 204，`observed-urls` / `tokens` 被 no-op 忽略，避免 B 站-only 部署仍由扩展打开小红书搜索页。
+- 本地部署用 `docker-compose.local.yml` 默认打开 `OPENBILICLAW_NO_XHS=1`，适配“只使用 B 站”的本机 profile。
+
+---
+
 ## v0.3.66: 修复 pool 上限失守（refresh 结束时漏 enforce 总量 cap）（2026-05-08）
 
 ### 背景

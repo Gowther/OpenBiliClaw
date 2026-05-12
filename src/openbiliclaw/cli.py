@@ -2702,7 +2702,9 @@ def _ask_xhs_inclusion() -> bool:
 
     Returns True iff the caller should proceed with xhs bootstrap.
     """
-    if os.environ.get("OPENBILICLAW_NO_XHS", "").strip() == "1":
+    from openbiliclaw.runtime.source_flags import xhs_disabled
+
+    if xhs_disabled():
         console.print("[dim]  跳过小红书数据接入(OPENBILICLAW_NO_XHS=1)。[/dim]")
         return False
     if not _is_interactive_terminal():

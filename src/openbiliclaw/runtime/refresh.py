@@ -7,11 +7,13 @@ import logging
 from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from openbiliclaw.recommendation.delight import DEFAULT_DELIGHT_THRESHOLD
-from openbiliclaw.runtime.task_registry import BackgroundTaskRegistry
 from openbiliclaw.soul.speculator import build_probe_axis, choose_next_probe_candidate
+
+if TYPE_CHECKING:
+    from openbiliclaw.runtime.task_registry import BackgroundTaskRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -258,6 +260,10 @@ class ContinuousRefreshController:
             "last_notification_at": str(state.get("last_notification_at", "")),
             "unread_count": self.database.count_unread_recommendations(),
             "pool_available_count": self.database.count_pool_candidates(),
+            "pool_pending_copy_count": self._database_count(
+                "count_pool_candidates_needing_copy",
+            ),
+            "pool_fresh_count": self._database_count("count_fresh_pool_rows"),
             "pool_target_count": self.pool_target_count,
             "last_discovered_count": self._int_state_value(state, "last_discovered_count"),
             "last_replenished_count": self._int_state_value(state, "last_replenished_count"),
@@ -267,6 +273,14 @@ class ContinuousRefreshController:
             "pending_delight_count": pending_delight_count,
             "last_delight_notification_at": str(state.get("last_delight_notification_at", "")),
         }
+
+    def _database_count(self, method_name: str) -> int:
+        method = getattr(self.database, method_name, None)
+        if not callable(method):
+            return 0
+        with suppress(Exception):
+            return int(method())
+        return 0
 
     async def refresh_if_needed(self) -> dict[str, object]:
         """Refresh discovery candidates when thresholds are met.

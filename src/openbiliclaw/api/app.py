@@ -5,9 +5,11 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import suppress
+from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
-from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from openbiliclaw.api.models import (
@@ -64,6 +66,97 @@ SOURCE_LABELS = {
     "chat": "聊天",
     "profile_refresh": "聚合观察",
 }
+
+BILIBILI_IMAGE_HOST_SUFFIXES = ("hdslb.com", "biliimg.com")
+IMAGE_PROXY_MAX_BYTES = 5 * 1024 * 1024
+IMAGE_PROXY_TIMEOUT_SECONDS = 8.0
+
+
+def _web_console_static_dir() -> Path:
+    return Path(__file__).resolve().parents[1] / "web" / "static"
+
+
+def _mount_web_console(app: FastAPI) -> None:
+    """Serve the local browser console at ``/app``.
+
+    The console is intentionally plain static HTML/CSS/JS. It reuses the
+    existing localhost API surface instead of introducing a separate
+    frontend build pipeline.
+    """
+    static_dir = _web_console_static_dir()
+    if not (static_dir / "index.html").exists():
+        logger.warning("Web console static assets not found at %s", static_dir)
+        return
+
+    from fastapi.responses import RedirectResponse
+    from fastapi.staticfiles import StaticFiles
+
+    @app.get("/app", include_in_schema=False)
+    def web_console_root() -> RedirectResponse:
+        return RedirectResponse(url="/app/")
+
+    app.mount(
+        "/app",
+        StaticFiles(directory=static_dir, html=True),
+        name="openbiliclaw-web-console",
+    )
+
+
+def _is_allowed_bilibili_image_url(url: str) -> bool:
+    parsed = urlparse(url.strip())
+    if parsed.scheme not in {"http", "https"}:
+        return False
+    if parsed.username or parsed.password:
+        return False
+    host = (parsed.hostname or "").lower().rstrip(".")
+    if not host:
+        return False
+    return any(
+        host == suffix or host.endswith(f".{suffix}") for suffix in BILIBILI_IMAGE_HOST_SUFFIXES
+    )
+
+
+async def _fetch_bilibili_image(url: str) -> tuple[bytes, str]:
+    import httpx
+
+    headers = {
+        "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+        "Referer": "https://www.bilibili.com/",
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        ),
+    }
+    try:
+        async with (
+            httpx.AsyncClient(
+                timeout=IMAGE_PROXY_TIMEOUT_SECONDS,
+                follow_redirects=True,
+            ) as client,
+            client.stream("GET", url, headers=headers) as response,
+        ):
+            if not _is_allowed_bilibili_image_url(str(response.url)):
+                raise HTTPException(status_code=400, detail="Redirected image host is not allowed.")
+            if response.status_code >= 400:
+                raise HTTPException(
+                    status_code=response.status_code,
+                    detail="Image upstream returned an error.",
+                )
+            content_type = response.headers.get("content-type", "").split(";", 1)[0].strip()
+            if not content_type.lower().startswith("image/"):
+                raise HTTPException(status_code=502, detail="Upstream response is not an image.")
+
+            data = bytearray()
+            async for chunk in response.aiter_bytes():
+                data.extend(chunk)
+                if len(data) > IMAGE_PROXY_MAX_BYTES:
+                    raise HTTPException(status_code=413, detail="Image is too large.")
+            return bytes(data), content_type
+    except HTTPException:
+        raise
+    except httpx.RequestError as exc:
+        raise HTTPException(status_code=502, detail="Failed to fetch image.") from exc
 
 
 def _cap_by_franchise(
@@ -159,6 +252,7 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    _mount_web_console(app)
 
     # ── Build RuntimeContext ────────────────────────────────────────
     config = load_config()
@@ -227,6 +321,23 @@ def create_app(
     @app.get("/api/health", response_model=HealthResponse)
     def health() -> HealthResponse:
         return HealthResponse(status="ok", service="openbiliclaw-api")
+
+    @app.get("/api/image-proxy", include_in_schema=False)
+    async def image_proxy(url: str = Query(..., min_length=1)) -> Response:
+        """Proxy Bilibili cover images for the local web console.
+
+        Bilibili CDN cover URLs can reject direct browser hotlinks from
+        localhost. This endpoint is deliberately narrow: it only fetches
+        known Bilibili image hosts and refuses non-image responses.
+        """
+        if not _is_allowed_bilibili_image_url(url):
+            raise HTTPException(status_code=400, detail="Only Bilibili image URLs are allowed.")
+        data, content_type = await _fetch_bilibili_image(url)
+        return Response(
+            content=data,
+            media_type=content_type,
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
 
     @app.post("/api/bilibili/cookie", response_model=BilibiliCookieResponse)
     async def sync_bilibili_cookie(payload: BilibiliCookieIn) -> BilibiliCookieResponse:
@@ -840,9 +951,7 @@ def create_app(
         if ctx.recommendation_engine is None or ctx.soul_engine is None:
             return
         if not ctx.soul_engine.is_profile_ready():
-            logger.debug(
-                "Background pool classification skipped: soul profile not ready"
-            )
+            logger.debug("Background pool classification skipped: soul profile not ready")
             return
         try:
             profile = await ctx.soul_engine.get_profile()
@@ -1050,7 +1159,7 @@ def create_app(
             }
             with suppress(Exception):
                 await ctx.event_hub.publish(payload_event)
-            pushed.append(payload_event["bvid"])
+            pushed.append(str(payload_event["bvid"]))
 
         # Clear cooldown so the regular push loop isn't gated after manual
         # trigger.
@@ -2007,9 +2116,7 @@ def create_app(
         if author and nickname and author == nickname:
             return True
         author_id = str(note.get("author_id", "") or "").strip().lower()
-        if author_id and user_id and author_id == user_id:
-            return True
-        return False
+        return bool(author_id and user_id and author_id == user_id)
 
     def _purge_self_authored_pool_items(
         database: Any,
@@ -2127,6 +2234,11 @@ def create_app(
         """
         from fastapi import HTTPException
 
+        from openbiliclaw.runtime.source_flags import xhs_disabled
+
+        if xhs_disabled():
+            return {"ok": True, "accepted": 0, "disabled": True}
+
         urls_raw: list[str] = payload.get("urls", [])
         notes_raw: list[dict[str, Any]] = payload.get("notes", [])
         page_type: str = payload.get("page_type", "other")
@@ -2190,6 +2302,11 @@ def create_app(
         Without this, clicking an xhs recommendation trips xhs's 300031
         access-denied gating because the stored URL lacks xsec_token.
         """
+        from openbiliclaw.runtime.source_flags import xhs_disabled
+
+        if xhs_disabled():
+            return {"ok": True, "upgraded": 0, "disabled": True}
+
         raw = payload.get("pairs", [])
         if not isinstance(raw, list) or not raw:
             return {"ok": True, "upgraded": 0}
@@ -2230,13 +2347,15 @@ def create_app(
         """Return the oldest pending xhs task, or 204 if none."""
         from starlette.responses import Response
 
+        from openbiliclaw.runtime.source_flags import xhs_disabled
+
         # 204 No Content responses MUST NOT carry a body (RFC 7230).
         # JSONResponse(204, None) serialises None to "null" (4 bytes),
         # then GZipMiddleware (minimum_size=0) wraps it into ~20 bytes
         # of gzip stream while Content-Length stays at 4, which trips
         # h11's strict "Too much data for declared Content-Length"
         # check on every poll. Use a body-less Response instead.
-        if _xhs_task_queue is None:
+        if _xhs_task_queue is None or xhs_disabled():
             return Response(status_code=204)
         task = _xhs_task_queue.next_pending()
         if task is None:
@@ -2261,6 +2380,8 @@ def create_app(
     @app.post("/api/sources/xhs/task-result")
     async def xhs_task_result(payload: dict[str, Any]) -> dict[str, Any]:
         """Accept a task result from the extension dispatcher."""
+        from openbiliclaw.runtime.source_flags import xhs_disabled
+
         task_id = payload.get("task_id", "")
         status = payload.get("status", "")
         urls = payload.get("urls", [])
@@ -2277,7 +2398,7 @@ def create_app(
 
             raise HTTPException(status_code=422, detail="task_id is required")
 
-        if _xhs_task_queue is None:
+        if _xhs_task_queue is None or xhs_disabled():
             return {"ok": True}
 
         task = _xhs_task_queue.get(task_id)
@@ -2326,8 +2447,7 @@ def create_app(
                         propagated += 1
                 if skipped_self > 0:
                     logger.info(
-                        "xhs bootstrap propagate: dropped %d self-authored note(s) "
-                        "(%d propagated)",
+                        "xhs bootstrap propagate: dropped %d self-authored note(s) (%d propagated)",
                         skipped_self,
                         propagated,
                     )
@@ -2339,7 +2459,9 @@ def create_app(
     @app.get("/api/sources/xhs/creators")
     def xhs_list_creators() -> dict[str, Any]:
         """List all xhs creator subscriptions."""
-        if _xhs_creator_store is None:
+        from openbiliclaw.runtime.source_flags import xhs_disabled
+
+        if _xhs_creator_store is None or xhs_disabled():
             return {"items": []}
         return {"items": _xhs_creator_store.list_all()}
 
@@ -2347,6 +2469,8 @@ def create_app(
     def xhs_add_creator(payload: dict[str, Any]) -> dict[str, Any]:
         """Add an xhs creator subscription."""
         from fastapi import HTTPException
+
+        from openbiliclaw.runtime.source_flags import xhs_disabled
 
         creator_id = payload.get("creator_id", "")
         creator_url = payload.get("creator_url", "")
@@ -2358,7 +2482,7 @@ def create_app(
                 detail="creator_id and creator_url are required",
             )
 
-        if _xhs_creator_store is None:
+        if _xhs_creator_store is None or xhs_disabled():
             raise HTTPException(status_code=503, detail="xhs not configured")
         _xhs_creator_store.add(creator_id, creator_url, display_name)
         return {"ok": True}
@@ -2368,7 +2492,9 @@ def create_app(
         """Delete an xhs creator subscription."""
         from fastapi import HTTPException
 
-        if _xhs_creator_store is None:
+        from openbiliclaw.runtime.source_flags import xhs_disabled
+
+        if _xhs_creator_store is None or xhs_disabled():
             raise HTTPException(status_code=503, detail="xhs not configured")
         deleted = _xhs_creator_store.delete(sub_id)
         if not deleted:
@@ -2772,8 +2898,7 @@ def create_app(
         _purged = _purge_self_authored_pool_items(ctx.database, _existing_self_info)
         if _purged:
             logger.info(
-                "startup purge: suppressed %d self-authored xhs pool item(s) "
-                "(nickname=%r)",
+                "startup purge: suppressed %d self-authored xhs pool item(s) (nickname=%r)",
                 _purged,
                 _existing_self_info.get("nickname", ""),
             )

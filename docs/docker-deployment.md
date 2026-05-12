@@ -42,6 +42,14 @@ OpenBiliClaw 不爬登录态——它复用**你**当前浏览器的登录会话
 - **小红书**：必须在浏览器里登录 https://www.xiaohongshu.com。后端不直接抓小红书，所有发现/详情都通过扩展以你的登录态执行——大部分任务(search / creator 抓取)在隐藏 tab 里跑;但 v0.3.22+ 起 `init` 期间的 **bootstrap_profile 滚动任务会临时打开一个前台 tab**(后台 tab 在小红书上无法触发瀑布流懒加载),会抢一次焦点 10-30 秒,完成后自动关闭。**不登录 = 完全没有小红书内容**
 - **小红书反爬强建议**：开一个独立 profile 的 Chrome 用 `--remote-debugging-port=9222` 启动，里面手动登录小红书一次；后端 `[sources.browser] cdp_url = "http://host.docker.internal:9222"` 即可永久复用
 
+如果只想使用 B 站，在 compose 的 backend 环境变量里设置：
+
+```yaml
+OPENBILICLAW_NO_XHS: "1"
+```
+
+该开关会跳过 `init` 的小红书 bootstrap，也会让 `serve-api` 运行时停止创建小红书搜索任务，并让扩展轮询 `/api/sources/xhs/next-task` 时拿到 204，不再主动打开小红书 tab。
+
 详见 [配置参考 / sources.browser 段](modules/config.md#sourcesbrowser)。
 
 ## 快速开始
@@ -87,7 +95,7 @@ docker compose ps
 > - 不想加就回 N,只用 B 站数据建画像
 > - 脚本化场景直接传 flag:`docker exec -it openbiliclaw-backend openbiliclaw init --no-xhs` 跳过 / `--yes-xhs` 强制启用
 > - AI agent 的 `agent_bootstrap.py` auto-init 不会默认启用小红书；必须传 `--yes-xhs` 或 `--no-xhs`。没传会返回 `needs_decisions`，让 agent 先问用户
-> - 想永久跳过:在 docker-compose.yml 里加 `OPENBILICLAW_NO_XHS=1` 环境变量
+> - 想永久跳过:在 docker-compose.yml 里加 `OPENBILICLAW_NO_XHS=1` 环境变量；它同时关闭 init bootstrap、运行时小红书任务生产和扩展任务 pickup
 
 > 💡 **AI agent 一句话部署**：把下面这句粘到 Claude Code / Codex CLI / Cursor / OpenClaw：
 > ```
@@ -116,6 +124,8 @@ docker exec -it openbiliclaw-backend vi /app/runtime/config.toml
 | `OPENBILICLAW_PROXY_HOST` | `host.docker.internal` | 代理主机地址 |
 | `OPENBILICLAW_PROXY_PORT` | `7897` | 代理端口 |
 | `OPENBILICLAW_PROXY_TIMEOUT` | `1.0` | 代理探测超时（秒） |
+| `OPENBILICLAW_DISABLE_PROXY` | 空 | 设为 `1` / `true` / `yes` / `on` 时完全禁用代理自动探测，并清除容器内已有代理环境变量 |
+| `OPENBILICLAW_NO_XHS` | 空 | 设为 `1` / `true` / `yes` / `on` 时跳过小红书 bootstrap、运行时任务生产、任务 pickup 和被动 XHS ingest |
 
 ### LLM 配置
 
@@ -225,6 +235,13 @@ docker compose up -d --build
 ### Clash 代理
 
 容器启动时自动探测宿主机 Clash 代理（默认 `host.docker.internal:7897`）。
+
+如果不希望容器任何时候自动走代理：
+
+```bash
+export OPENBILICLAW_DISABLE_PROXY=1
+docker compose up -d --build
+```
 
 自定义代理端口：
 
