@@ -255,7 +255,7 @@ function renderStatus() {
 
 function renderMessageBadge() {
   const badge = $("messageBadge");
-  const count = state.messages.filter((item) => !item.handled).length;
+  const count = state.messages.length;
   badge.textContent = count ? String(count) : "";
   badge.hidden = count === 0;
 }
@@ -426,7 +426,6 @@ function upsertDelight(item) {
   } else {
     state.delights.push(normalized);
   }
-  upsertMessage(normalized);
   if (state.delightIndex >= state.delights.length) {
     state.delightIndex = Math.max(0, state.delights.length - 1);
   }
@@ -434,12 +433,10 @@ function upsertDelight(item) {
 
 function removeDelight(id) {
   state.delights = state.delights.filter((item) => item.id !== id);
-  markMessageHandled(id);
   if (state.delightIndex >= state.delights.length) {
     state.delightIndex = Math.max(0, state.delights.length - 1);
   }
   renderDelightSlot();
-  renderMessages();
 }
 
 function renderDelightSlot() {
@@ -514,7 +511,22 @@ async function openDelight(item) {
   }).catch(() => {});
 }
 
-async function respondToDelight(item, responseType, message = "") {
+async function markDelightSent(bvid) {
+  if (!bvid) return;
+  await requestJson("/delight/sent", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ bvid }),
+  }).catch(() => {});
+}
+
+function openDelightFromMessage(item) {
+  void openDelight(item);
+  removeDelightMessage(item.bvid);
+  renderMessages();
+}
+
+async function respondToDelight(item, responseType, message = "", options = {}) {
   const payload = await requestJson("/delight/respond", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -528,9 +540,18 @@ async function respondToDelight(item, responseType, message = "") {
   if (responseType === "chat") {
     item.chat_reply = payload.reply || "没有返回内容。";
     toast(payload.ok === false ? item.chat_reply : "已回复。");
+    if (options.removeMessage) {
+      window.setTimeout(() => {
+        removeDelightMessage(item.bvid);
+        renderMessages();
+      }, 4000);
+    }
   } else {
     toast(responseType === "dislike" ? "已减少这类惊喜。" : "已记下喜欢。");
     removeDelight(item.id);
+    if (options.removeMessage) {
+      removeDelightMessage(item.bvid);
+    }
   }
   await Promise.allSettled([loadProfile(), loadActivity({ reset: true })]);
   renderDelightSlot();
@@ -559,6 +580,7 @@ function normalizeMessage(item) {
       domain,
       title: domain,
       message: text(item.message || item.reason, `要不要多探索「${domain}」？`),
+      specifics: Array.isArray(item.specifics) ? item.specifics : [],
       handled: Boolean(item.handled),
       chat_reply: text(item.chat_reply),
     };
@@ -580,32 +602,38 @@ function normalizeMessage(item) {
   };
 }
 
-function markMessageHandled(id) {
-  for (const message of state.messages) {
-    if (message.id === id) {
-      message.handled = true;
-    }
-  }
+function removeMessageById(id) {
+  state.messages = state.messages.filter((message) => message.id !== id);
   renderMessageBadge();
 }
 
-function markProbeHandled(domain) {
-  markMessageHandled(`probe:${domain}`);
+function removeProbeMessage(domain) {
+  removeMessageById(`probe:${domain}`);
+}
+
+function removeDelightMessage(bvid) {
+  if (!bvid) return;
+  state.messages = state.messages.filter((message) => message.type !== "delight" || message.bvid !== bvid);
+  renderMessageBadge();
+  void markDelightSent(bvid);
 }
 
 function syncProfileProbeMessages() {
   const activeItems = Array.isArray(state.profile?.speculative_interests)
     ? state.profile.speculative_interests
     : [];
-  const activeDomains = new Set(activeItems.map((item) => text(item.domain)).filter(Boolean));
+  const activeProbeItems = activeItems.filter((item) => !item.status || item.status === "active");
+  const activeDomains = new Set(activeProbeItems.map((item) => text(item.domain)).filter(Boolean));
   state.messages = state.messages.filter(
-    (message) => message.type !== "probe" || message.handled || activeDomains.has(message.domain),
+    (message) => message.type !== "probe" || activeDomains.has(message.domain),
   );
-  for (const item of activeItems) {
+  for (const item of activeProbeItems) {
+    if (!text(item.domain)) continue;
     upsertMessage({
       type: "interest.probe",
       domain: item.domain,
       reason: item.reason || `确认度 ${item.confirmation_count}/${item.confirmation_threshold}`,
+      specifics: item.specifics,
     });
   }
   renderMessages();
@@ -614,13 +642,12 @@ function syncProfileProbeMessages() {
 function renderMessages() {
   const list = $("messagesList");
   clear(list);
-  const activeMessages = state.messages.filter((item) => !item.handled);
-  if (!activeMessages.length) {
+  if (!state.messages.length) {
     list.appendChild(node("div", "empty-state", "暂无待处理消息。"));
     renderMessageBadge();
     return;
   }
-  for (const item of activeMessages) {
+  for (const item of state.messages) {
     list.appendChild(renderMessageCard(item));
   }
   renderMessageBadge();
@@ -630,13 +657,30 @@ function renderMessageCard(item) {
   if (item.type === "delight") return renderDelightMessage(item);
   if (item.type === "probe") return renderProbeMessage(item);
   const card = node("article", "message-card");
+  card.appendChild(renderDismissButton("关闭", () => {
+    removeMessageById(item.id);
+    renderMessages();
+  }));
   card.appendChild(node("h3", "", item.title || "消息"));
   if (item.message) card.appendChild(node("p", "", item.message));
   return card;
 }
 
+function renderDismissButton(label, onClick) {
+  const button = node("button", "message-dismiss", "×");
+  button.type = "button";
+  button.title = label;
+  button.setAttribute("aria-label", label);
+  button.addEventListener("click", onClick);
+  return button;
+}
+
 function renderDelightMessage(item) {
   const card = node("article", "message-card message-with-cover");
+  card.appendChild(renderDismissButton("关闭这条惊喜推荐", () => {
+    removeDelightMessage(item.bvid);
+    renderMessages();
+  }));
   card.appendChild(renderCover(item, "message-cover"));
   const body = node("div", "");
   body.appendChild(node("span", "mini-label", "惊喜推荐"));
@@ -645,17 +689,17 @@ function renderDelightMessage(item) {
   const actions = node("div", "card-actions");
   const openButton = node("button", "primary-button", "打开");
   openButton.type = "button";
-  openButton.addEventListener("click", () => openDelight(item));
+  openButton.addEventListener("click", () => openDelightFromMessage(item));
   const like = node("button", "secondary-button", "喜欢");
   like.type = "button";
-  like.addEventListener("click", () => respondToDelight(item, "like"));
+  like.addEventListener("click", () => respondToDelight(item, "like", "", { removeMessage: true }));
   const dislike = node("button", "danger-button", "不喜欢");
   dislike.type = "button";
-  dislike.addEventListener("click", () => respondToDelight(item, "dislike"));
+  dislike.addEventListener("click", () => respondToDelight(item, "dislike", "", { removeMessage: true }));
   actions.append(openButton, like, dislike);
   body.append(actions);
   body.appendChild(renderInlineChatRow("聊一句原因", (message) =>
-    respondToDelight(item, "chat", message),
+    respondToDelight(item, "chat", message, { removeMessage: true }),
   ));
   if (item.chat_reply) body.appendChild(node("div", "inline-reply", item.chat_reply));
   card.appendChild(body);
@@ -664,9 +708,20 @@ function renderDelightMessage(item) {
 
 function renderProbeMessage(item) {
   const card = node("article", "message-card");
+  card.appendChild(renderDismissButton("关闭这条兴趣探针", () => {
+    removeProbeMessage(item.domain);
+    renderMessages();
+  }));
   card.appendChild(node("span", "mini-label", "兴趣探针"));
   card.appendChild(node("h3", "", item.title || item.domain));
   card.appendChild(node("p", "", item.message));
+  const specifics = (item.specifics || [])
+    .map((specific) => text(specific.name || specific))
+    .filter(Boolean)
+    .slice(0, 5);
+  if (specifics.length) {
+    card.appendChild(node("div", "meta", specifics.join(" / ")));
+  }
   const actions = node("div", "card-actions");
   const confirm = node("button", "primary-button", "确认喜欢");
   confirm.type = "button";
@@ -717,11 +772,17 @@ async function respondToProbe(domain, responseType, message = "", messageId = ""
     const target = state.messages.find((item) => item.id === messageId);
     if (target) target.chat_reply = payload.reply || "没有返回内容。";
     toast(payload.reply || payload.message || "已回复。");
+    if (messageId) {
+      window.setTimeout(() => {
+        removeMessageById(messageId);
+        renderMessages();
+      }, 4000);
+    }
   } else {
     if (messageId) {
-      markMessageHandled(messageId);
+      removeMessageById(messageId);
     } else {
-      markProbeHandled(domain);
+      removeProbeMessage(domain);
     }
     toast(responseType === "confirm" ? "已加入画像。" : "已暂时搁置。");
   }
@@ -1021,12 +1082,10 @@ async function loadDelights() {
   const payload = await requestJson("/delight/pending-batch?limit=20");
   state.delights = [];
   state.delightIndex = 0;
-  state.messages = state.messages.filter((item) => item.type !== "delight");
   for (const item of Array.isArray(payload.items) ? payload.items : []) {
     upsertDelight(item);
   }
   renderDelightSlot();
-  renderMessages();
 }
 
 async function loadProfile() {
@@ -1143,6 +1202,7 @@ function handleRuntimeEvent(payload) {
   state.lastStreamEvent = payload.message || payload.summary || payload.type || "";
   if (payload.type === "delight.candidate" && payload.bvid) {
     upsertDelight(payload);
+    upsertMessage({ ...payload, type: "delight" });
     renderDelightSlot();
     renderMessages();
   }

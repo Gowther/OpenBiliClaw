@@ -18,7 +18,7 @@
 | 推荐反馈 | ✅ | 调用 `/api/feedback` 记录 `like` / `dislike` / `comment` |
 | 点击回传 | ✅ | 打开内容链接时 best-effort 调用 `/api/recommendation-click` |
 | 惊喜推荐队列 | ✅ | 调用 `/api/delight/pending-batch` 展示待处理惊喜推荐，支持打开、喜欢、不喜欢和围绕该内容聊天 |
-| 消息页 | ✅ | 汇总 WebSocket 推送的 `interest.probe` / `delight.candidate`，并从画像里的 `speculative_interests` 回填历史待确认兴趣 |
+| 消息页 | ✅ | 与插件消息逻辑保持一致：画像里的 active `speculative_interests` 回填为兴趣探针；实时 `delight.candidate` 进入消息；`/api/delight/pending-batch` 只补推荐页惊喜队列，不回填历史惊喜消息 |
 | 兴趣探针反馈 | ✅ | 调用 `/api/interest-probes/respond` 支持确认喜欢、暂时不要和对话澄清 |
 | 画像页 | ✅ | 调用 `/api/profile-summary` 展示画像摘要、喜欢/避开方向、核心动机、内容偏好、观看场景、认知风格、人格线索、待确认兴趣、活跃洞察、近期观察和分页认知变化 |
 | 动态页 | ✅ | 调用 `/api/activity-feed` 展示后台补货、账号同步、画像学习和近期认知变化的活动流 |
@@ -80,4 +80,5 @@ WS   /api/runtime-stream?client=web
 - **Web 控制台不负责行为采集。** 普通网页不能跨域读取 `bilibili.com` Cookie，也不能注入 B 站页面监听 DOM 行为。采集仍由插件负责；Web 控制台只做本地查看和操作。
 - **配置仍留在插件 / 本地配置链路。** 二档只搬迁不依赖插件权限的运行功能；模型、Cookie、来源等配置入口不在 Web 控制台重复实现，避免出现两套配置状态。
 - **默认只看 B 站。** 这是为了适配 B 站-only 本地部署；多源用户可以在页面右侧切到“全部来源”。
+- **消息生命周期对齐插件。** 兴趣探针由画像 active speculations 驱动，旧探针会随画像刷新被移除；惊喜推荐的历史 pending 队列只显示在推荐页，只有运行时新推送的 `delight.candidate` 才进入消息，关闭惊喜消息会调用 `/api/delight/sent`。
 - **夜间模式按 UTC+8 判定。** 自动模式固定使用 UTC+8 的 18:00-05:59 作为夜间窗口，不依赖浏览器所在地时区；手动模式写入 `localStorage`。

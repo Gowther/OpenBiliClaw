@@ -359,10 +359,14 @@ class TestBackendAPI:
         assert "isUtc8Night" in script.text
         assert "THEME_STORAGE_KEY" in script.text
         assert "/image-proxy" in script.text
+        assert "markDelightSent" in script.text
+        assert 'upsertMessage({ ...payload, type: "delight" });' in script.text
+        assert "upsertMessage(normalized)" not in script.text
         assert styles.status_code == 200
         assert ':root[data-theme="dark"]' in styles.text
         assert ".delight-card" in styles.text
         assert ".message-card" in styles.text
+        assert ".message-dismiss" in styles.text
 
     def test_image_proxy_rejects_non_bilibili_hosts(self) -> None:
         from fastapi.testclient import TestClient
