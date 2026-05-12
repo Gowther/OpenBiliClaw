@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>OpenBiliClaw</title>
-    <link rel="stylesheet" href="/app/styles.css?v=20260512-pool-counts" />
+    <link rel="stylesheet" href="/app/styles.css?v=20260512-dark-mode" />
   </head>
   <body>
     <div class="app-shell">
@@ -15,6 +15,14 @@
         </div>
         <div class="topbar-actions">
           <span id="streamState" class="status-pill" data-tone="muted">实时连接中</span>
+          <button
+            id="themeToggleButton"
+            class="secondary-button theme-button"
+            type="button"
+            aria-label="切换主题"
+          >
+            自动
+          </button>
           <button id="reloadButton" class="secondary-button" type="button">刷新</button>
         </div>
       </header>
@@ -122,6 +130,6 @@
     </div>
 
     <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
-    <script type="module" src="/app/app.js?v=20260512-pool-counts"></script>
+    <script type="module" src="/app/app.js?v=20260512-dark-mode"></script>
   </body>
 </html>

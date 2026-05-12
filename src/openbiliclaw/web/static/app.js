@@ -1,4 +1,6 @@
 const API_BASE = "/api";
+const THEME_STORAGE_KEY = "openbiliclaw.web.themeMode";
+const THEME_MODES = ["auto", "dark", "light"];
 
 const state = {
   online: false,
@@ -17,9 +19,75 @@ const state = {
   sourceFilter: "bilibili",
   chatBusy: false,
   lastStreamEvent: "",
+  themeMode: "auto",
 };
 
 const $ = (id) => document.getElementById(id);
+
+function storageGet(key) {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return "";
+  }
+}
+
+function storageSet(key, value) {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // Theme preference is non-critical.
+  }
+}
+
+function utc8Hour(date = new Date()) {
+  return (date.getUTCHours() + 8) % 24;
+}
+
+function isUtc8Night(date = new Date()) {
+  const hour = utc8Hour(date);
+  return hour >= 18 || hour < 6;
+}
+
+function resolveTheme(mode = state.themeMode, date = new Date()) {
+  if (mode === "dark" || mode === "light") return mode;
+  return isUtc8Night(date) ? "dark" : "light";
+}
+
+function themeLabel(mode = state.themeMode) {
+  if (mode === "dark") return "夜间";
+  if (mode === "light") return "日间";
+  return resolveTheme(mode) === "dark" ? "自动·夜" : "自动·日";
+}
+
+function applyTheme() {
+  const resolved = resolveTheme();
+  document.documentElement.dataset.theme = resolved;
+  const button = $("themeToggleButton");
+  if (!button) return;
+  button.textContent = themeLabel();
+  button.title = "主题：自动按 UTC+8 18:00-05:59 进入夜间";
+  button.setAttribute("aria-pressed", resolved === "dark" ? "true" : "false");
+}
+
+function setThemeMode(mode, { persist = true } = {}) {
+  state.themeMode = THEME_MODES.includes(mode) ? mode : "auto";
+  if (persist) storageSet(THEME_STORAGE_KEY, state.themeMode);
+  applyTheme();
+}
+
+function cycleThemeMode() {
+  const currentIndex = THEME_MODES.indexOf(state.themeMode);
+  const next = THEME_MODES[(currentIndex + 1) % THEME_MODES.length] || "auto";
+  setThemeMode(next);
+}
+
+function initTheme() {
+  setThemeMode(storageGet(THEME_STORAGE_KEY) || "auto", { persist: false });
+  window.setInterval(() => {
+    if (state.themeMode === "auto") applyTheme();
+  }, 60_000);
+}
 
 function node(tag, className = "", text = "") {
   const el = document.createElement(tag);
@@ -1136,6 +1204,7 @@ function connectRuntimeStream() {
 }
 
 function bindEvents() {
+  $("themeToggleButton").addEventListener("click", cycleThemeMode);
   $("reloadButton").addEventListener("click", loadAll);
   $("reshuffleButton").addEventListener("click", reshuffle);
   $("appendButton").addEventListener("click", appendRecommendations);
@@ -1168,6 +1237,7 @@ function bindEvents() {
   });
 }
 
+initTheme();
 bindEvents();
 watchBilibiliImageLinks();
 connectRuntimeStream();

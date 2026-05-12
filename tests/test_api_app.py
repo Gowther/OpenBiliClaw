@@ -345,7 +345,8 @@ class TestBackendAPI:
         assert redirect.headers["location"] == "/app/"
         assert index.status_code == 200
         assert "本地推荐控制台" in index.text
-        assert "app.js?v=20260512-pool-counts" in index.text
+        assert "app.js?v=20260512-dark-mode" in index.text
+        assert 'id="themeToggleButton"' in index.text
         assert 'id="delightSlot"' in index.text
         assert 'id="messagesPanel"' in index.text
         assert 'id="activityPanel"' in index.text
@@ -355,8 +356,11 @@ class TestBackendAPI:
         assert "interest-probes/respond" in script.text
         assert "activity-feed" in script.text
         assert "pool_pending_copy_count" in script.text
+        assert "isUtc8Night" in script.text
+        assert "THEME_STORAGE_KEY" in script.text
         assert "/image-proxy" in script.text
         assert styles.status_code == 200
+        assert ':root[data-theme="dark"]' in styles.text
         assert ".delight-card" in styles.text
         assert ".message-card" in styles.text
 
